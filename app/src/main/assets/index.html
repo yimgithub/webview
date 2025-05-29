@@ -1,11 +1,209 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>食品保质期提醒</title>
+  <script src="vue3.js"></script>
+  <style>
+    body { font-family: sans-serif; padding: 1rem; }
+    .card { border: 1px solid #ccc; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; }
+    .expired { background-color: #fdd; }
+    .near-expiry { background-color: #fffae6; }
+    .ok { background-color: #e6ffed; }
+    .consumed { background-color: #d9f2ff; text-decoration: line-through; }
+    .discarded { background-color: #f0e6ff; text-decoration: line-through; }
+    .controls { margin-top: 1rem; }
+    .tag { font-size: 0.8rem; color: #666; }
+    input, select, button { margin: 0.25rem 0; padding: 0.5rem; width: 100%; }
+  </style>
 </head>
-<body style="font-family: monospace">
-    REPLACE THIS FILE WITH YOUR OWN INDEX.HTML
+<body>
+<div id="app">
+  <h1>食品保质期提醒</h1>
+
+  <label>虚拟当前日期：</label>
+  <input type="date" v-model="virtualDate" />
+
+  <div>
+    <h2>添加食品</h2>
+    <input v-model="newFood.name" placeholder="食品名称" />
+    <input v-model="newFood.location" placeholder="食品位置" />
+
+    <select v-model="newFood.tag">
+      <option v-for="tag in tags" :key="tag" :value="tag">{{ tag }}</option>
+      <option disabled>—— 新建标签 ——</option>
+    </select>
+    <input v-if="newFood.tag === ''" v-model="newFood.customTag" placeholder="新标签名" />
+
+    <label>生产日期：</label>
+    <input type="date" v-model="newFood.production" />
+    <label>保质期（天）：</label>
+    <input type="number" v-model="newFood.shelfLife" @input="updateExpiryDate" />
+    <label>过期日期：</label>
+    <input type="date" v-model="newFood.expiry" />
+
+    <button @click="addFood">添加食品</button>
+  </div>
+
+  <div>
+    <h2>食品列表</h2>
+    <label>筛选分类：</label>
+    <select v-model="filterTag">
+      <option value="">全部</option>
+      <option v-for="tag in tags" :key="tag">{{ tag }}</option>
+    </select>
+  </div>
+
+  <div>
+    <div v-for="(food, index) in filteredFoods" :key="index" class="card" :class="statusClass(food)">
+      <strong>{{ food.name }}</strong>（{{ food.location }}）<br/>
+      <span class="tag">分类：{{ food.tag }}</span><br/>
+      生产日期：{{ food.production }}，过期日期：{{ food.expiry }}<br/>
+      状态：<span>{{ foodStatus(food) }}</span>
+      <div class="controls" v-if="food.status === 'normal'">
+        <button @click="editFood(index)">编辑</button>
+        <button @click="markStatus(index, 'consumed')">标记已食用</button>
+        <button @click="markStatus(index, 'discarded')">标记已丢弃</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button @click="deleteExpired">删除临期/过期/标记食品</button>
+  </div>
+</div>
+
+<script>
+const { createApp, reactive, computed, watch } = Vue;
+
+createApp({
+  setup() {
+    const STORAGE_KEY = 'food_reminders';
+
+    const virtualDate = Vue.ref(new Date().toISOString().split('T')[0]);
+
+    const tags = Vue.ref([]);
+    const filterTag = Vue.ref('');
+
+    const newFood = reactive({
+      name: '',
+      location: '',
+      tag: '',
+      customTag: '',
+      production: '',
+      shelfLife: '',
+      expiry: ''
+    });
+
+    const foods = Vue.ref(JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'));
+
+    const filteredFoods = computed(() => {
+      return foods.value.filter(f => (!filterTag.value || f.tag === filterTag.value));
+    });
+
+    const updateExpiryDate = () => {
+      if (newFood.production && newFood.shelfLife) {
+        const prod = new Date(newFood.production);
+        prod.setDate(prod.getDate() + parseInt(newFood.shelfLife));
+        newFood.expiry = prod.toISOString().split('T')[0];
+      }
+    };
+
+    const addFood = () => {
+      const tag = newFood.tag || newFood.customTag;
+      if (!tags.value.includes(tag)) tags.value.push(tag);
+      foods.value.push({
+        name: newFood.name,
+        location: newFood.location,
+        tag,
+        production: newFood.production,
+        expiry: newFood.expiry,
+        status: 'normal',
+        reminded: false
+      });
+      persist();
+      Object.assign(newFood, { name: '', location: '', tag: '', customTag: '', production: '', shelfLife: '', expiry: '' });
+    };
+
+    const persist = () => {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(foods.value));
+    };
+
+    const statusClass = (food) => {
+      if (food.status === 'consumed') return 'consumed';
+      if (food.status === 'discarded') return 'discarded';
+      const today = new Date(virtualDate.value);
+      const expiry = new Date(food.expiry);
+      const diff = (expiry - today) / (1000 * 3600 * 24);
+      if (diff < 0) return 'expired';
+      if (diff <= 1) return 'near-expiry';
+      return 'ok';
+    };
+
+    const foodStatus = (food) => {
+      if (food.status === 'consumed') return '已食用';
+      if (food.status === 'discarded') return '已丢弃';
+      const cls = statusClass(food);
+      return cls === 'expired' ? '已过期' : cls === 'near-expiry' ? '即将过期' : '正常';
+    };
+
+    const remind = () => {
+      const today = new Date(virtualDate.value);
+      for (let food of foods.value) {
+        if (food.status !== 'normal') continue;
+        const expiry = new Date(food.expiry);
+        const diff = (expiry - today) / (1000 * 3600 * 24);
+        if (diff <= 1 && diff >= 0 && !food.reminded) {
+          alert(`提醒：${food.name} 即将过期！`);
+          food.reminded = true;
+        }
+      }
+      persist();
+    };
+
+    const markStatus = (index, status) => {
+      foods.value[index].status = status;
+      persist();
+    };
+
+    const deleteExpired = () => {
+      foods.value = foods.value.filter(f => {
+        const cls = statusClass(f);
+        return cls === 'ok';
+      });
+      persist();
+    };
+
+    const editFood = (index) => {
+      const f = foods.value[index];
+      Object.assign(newFood, f);
+      foods.value.splice(index, 1);
+    };
+
+    watch(foods, () => {
+      tags.value = [...new Set(foods.value.map(f => f.tag))];
+    }, { immediate: true });
+
+    watch(virtualDate, remind, { immediate: true });
+
+    return {
+      virtualDate,
+      newFood,
+      foods,
+      tags,
+      filterTag,
+      filteredFoods,
+      updateExpiryDate,
+      addFood,
+      statusClass,
+      foodStatus,
+      markStatus,
+      deleteExpired,
+      editFood
+    };
+  }
+}).mount('#app');
+</script>
 </body>
 </html>
