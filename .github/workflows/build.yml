@@ -28,7 +28,7 @@ jobs:
       - name: Build APK
         run: ./gradlew assembleRelease
 
-      - name: Upload APK
+      - name: Upload test artifact
         uses: actions/upload-artifact@v3
         with:
           name: app-release.apk
